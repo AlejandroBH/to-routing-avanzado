@@ -1,7 +1,7 @@
 // api-rest-completa.js
 const express = require("express");
 const { body, param, query, validationResult } = require("express-validator");
-const { AppError, NotFoundError, ValidationError } = require("./errores");
+const { AppError, NotFoundError } = require("./errores.js");
 
 // Crear aplicación
 const app = express();
@@ -16,6 +16,7 @@ let tareas = [
     completada: false,
     prioridad: "alta",
     usuarioId: 1,
+    categoriaId: 1,
   },
   {
     id: 2,
@@ -24,6 +25,7 @@ let tareas = [
     completada: true,
     prioridad: "media",
     usuarioId: 1,
+    categoriaId: 2,
   },
   {
     id: 3,
@@ -32,6 +34,7 @@ let tareas = [
     completada: false,
     prioridad: "baja",
     usuarioId: 2,
+    categoriaId: 1,
   },
 ];
 
@@ -40,7 +43,23 @@ let usuarios = [
   { id: 2, nombre: "Usuario", email: "user@example.com" },
 ];
 
+let categorias = [
+  { id: 1, nombre: "Desarrollo" },
+  { id: 2, nombre: "Personal" },
+  { id: 3, nombre: "Hogar" },
+];
+
 let siguienteIdTarea = 4;
+let siguienteIdCategoria = 4;
+
+// Middleware de validación
+const validarErrores = (req, res, next) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) {
+    throw new ValidationError("Datos inválidos", errors.array());
+  }
+  next();
+};
 
 // Funciones helper
 function encontrarTarea(id, usuarioId = null) {
@@ -62,6 +81,14 @@ function encontrarUsuario(id) {
   return usuario;
 }
 
+function encontrarCategoria(id) {
+  const categoria = categorias.find((c) => c.id === parseInt(id));
+  if (!categoria) {
+    throw new NotFoundError("Categoría");
+  }
+  return categoria;
+}
+
 // Middleware de autenticación simulada
 function autenticar(req, res, next) {
   const authHeader = req.headers.authorization;
@@ -81,10 +108,12 @@ function autenticar(req, res, next) {
 // Crear routers modulares
 const tareasRouter = express.Router();
 const usuariosRouter = express.Router();
+const categoriasRouter = express.Router();
 
 // Middleware común para routers
 tareasRouter.use(autenticar);
 usuariosRouter.use(autenticar);
+categoriasRouter.use(autenticar);
 
 // RUTAS DE TAREAS
 
@@ -117,13 +146,14 @@ tareasRouter.get(
       .isIn(["titulo", "prioridad", "fecha"])
       .withMessage("ordenar inválido"),
   ],
-  ValidationError,
+  validarErrores,
   (req, res) => {
     let resultados = [...tareas];
     const {
       completada,
       prioridad,
       usuario_id,
+      categoria_id,
       pagina = 1,
       limite = 10,
       ordenar,
@@ -148,6 +178,11 @@ tareasRouter.get(
       resultados = resultados.filter(
         (t) => t.usuarioId === parseInt(usuario_id)
       );
+    }
+
+    if (categoria_id) {
+      const catId = parseInt(categoria_id);
+      resultados = resultados.filter((t) => t.categoriaId === catId);
     }
 
     // Búsqueda
@@ -195,7 +230,7 @@ tareasRouter.get(
 tareasRouter.get(
   "/:id",
   param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const tarea = encontrarTarea(req.params.id, req.usuario.userId);
     res.json(tarea);
@@ -223,8 +258,17 @@ tareasRouter.post(
       .optional()
       .isBoolean()
       .withMessage("completada debe ser un booleano"),
+    body("categoriaId")
+      .isInt({ min: 1 })
+      .withMessage("ID de categoría requerido y debe ser un número positivo")
+      .custom((value) => {
+        if (!encontrarCategoria(value)) {
+          throw new Error("La categoría especificada no existe");
+        }
+        return true;
+      }),
   ],
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const nuevaTarea = {
       id: siguienteIdTarea++,
@@ -233,6 +277,7 @@ tareasRouter.post(
       completada: req.body.completada || false,
       prioridad: req.body.prioridad || "media",
       usuarioId: req.usuario.userId,
+      categoriaId: req.body.categoriaId,
       fechaCreacion: new Date().toISOString(),
     };
 
@@ -259,8 +304,17 @@ tareasRouter.put(
       .isIn(["baja", "media", "alta"])
       .withMessage("Prioridad inválida"),
     body("completada").isBoolean().withMessage("completada debe ser booleano"),
+    body("categoriaId")
+      .isInt({ min: 1 })
+      .withMessage("ID de categoría requerido y debe ser un número positivo")
+      .custom((value) => {
+        if (!encontrarCategoria(value)) {
+          throw new Error("La categoría especificada no existe");
+        }
+        return true;
+      }),
   ],
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const tarea = encontrarTarea(req.params.id, req.usuario.userId);
 
@@ -268,6 +322,7 @@ tareasRouter.put(
     tarea.descripcion = req.body.descripcion || "";
     tarea.prioridad = req.body.prioridad;
     tarea.completada = req.body.completada;
+    tarea.categoriaId = req.body.categoriaId;
     tarea.fechaActualizacion = new Date().toISOString();
 
     res.json(tarea);
@@ -278,7 +333,7 @@ tareasRouter.put(
 tareasRouter.patch(
   "/:id",
   param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const tarea = encontrarTarea(req.params.id, req.usuario.userId);
     const camposPermitidos = [
@@ -286,6 +341,7 @@ tareasRouter.patch(
       "descripcion",
       "prioridad",
       "completada",
+      "categoriaId",
     ];
 
     // Validar que al menos un campo sea proporcionado
@@ -331,6 +387,13 @@ tareasRouter.patch(
             errors.push("completada: debe ser un booleano");
           }
           break;
+
+        case "categoriaId":
+          const catId = parseInt(req.body[campo]);
+          if (isNaN(catId) || catId <= 0 || !encontrarCategoria(catId)) {
+            errors.push("categoriaId: debe ser un ID de categoría válido");
+          }
+          break;
       }
     }
 
@@ -355,7 +418,7 @@ tareasRouter.patch(
 tareasRouter.delete(
   "/:id",
   param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const indice = tareas.findIndex(
       (t) =>
@@ -377,7 +440,7 @@ tareasRouter.delete(
 usuariosRouter.get(
   "/:id",
   param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
-  ValidationError,
+  validarErrores,
   (req, res) => {
     const usuario = encontrarUsuario(req.params.id);
     // Solo devolver datos públicos
@@ -386,9 +449,75 @@ usuariosRouter.get(
   }
 );
 
+// RUTAS DE CATEGORÍAS
+
+// GET /categorias - Listar todas las categorías
+categoriasRouter.get("/", (req, res) => {
+  res.json(categorias);
+});
+
+// GET /categorias/:id - Obtener categoría específica
+categoriasRouter.get(
+  "/:id",
+  param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
+  validarErrores,
+  (req, res) => {
+    const categoria = encontrarCategoria(req.params.id);
+    res.json(categoria);
+  }
+);
+
+// POST /categorias - Crear nueva categoría
+categoriasRouter.post(
+  "/",
+  [
+    body("nombre")
+      .trim()
+      .isLength({ min: 2, max: 50 })
+      .withMessage("Nombre debe tener entre 2 y 50 caracteres"),
+  ],
+  validarErrores,
+  (req, res) => {
+    const nuevaCategoria = {
+      id: siguienteIdCategoria++,
+      nombre: req.body.nombre,
+    };
+
+    categorias.push(nuevaCategoria);
+    res.status(201).json(nuevaCategoria);
+  }
+);
+
+// DELETE /categorias/:id - Eliminar categoría
+categoriasRouter.delete(
+  "/:id",
+  param("id").isInt({ min: 1 }).withMessage("ID debe ser un número positivo"),
+  validarErrores,
+  (req, res) => {
+    const catId = parseInt(req.params.id);
+    const indice = categorias.findIndex((c) => c.id === catId);
+
+    if (indice === -1) {
+      throw new NotFoundError("Categoría");
+    }
+
+    const tareasAsociadas = tareas.filter((t) => t.categoriaId === catId);
+    if (tareasAsociadas.length > 0) {
+      throw new AppError(
+        "No se puede eliminar la categoría porque tiene tareas asociadas",
+        409
+      );
+    }
+
+    const categoriaEliminada = categorias.splice(indice, 1)[0];
+    res.json({ mensaje: "Categoría eliminada", categoria: categoriaEliminada });
+  }
+);
+
 // Usar routers en la aplicación
 app.use("/api/tareas", tareasRouter);
 app.use("/api/usuarios", usuariosRouter);
+app.use("/api/categorias", categoriasRouter);
 
 // Ruta de login simulada
 app.post("/auth/login", (req, res) => {
@@ -408,34 +537,47 @@ app.get("/", (req, res) => {
   res.json({
     nombre: "API REST Completa con Express",
     version: "1.0.0",
-    descripcion: "API con routing avanzado, validación y manejo de errores",
+    descripcion:
+      "API con routing avanzado, validación, manejo de errores y categorías",
     endpoints: {
       auth: {
         "POST /auth/login": "Autenticación",
       },
       tareas: {
-        "GET /api/tareas": "Listar tareas (con filtros)",
+        "GET /api/tareas":
+          "Listar tareas (con filtros, incluyendo categoria_id)",
         "GET /api/tareas/:id": "Obtener tarea específica",
-        "POST /api/tareas": "Crear tarea",
-        "PUT /api/tareas/:id": "Actualizar tarea completa",
-        "PATCH /api/tareas/:id": "Actualizar tarea parcial",
+        "POST /api/tareas": "Crear tarea (requiere categoriaId)",
+        "PUT /api/tareas/:id":
+          "Actualizar tarea completa (requiere categoriaId)",
+        "PATCH /api/tareas/:id":
+          "Actualizar tarea parcial (opcionalmente categoriaId)",
         "DELETE /api/tareas/:id": "Eliminar tarea",
       },
       usuarios: {
         "GET /api/usuarios/:id": "Obtener perfil de usuario",
+      },
+      categorias: {
+        "GET /api/categorias": "Listar todas las categorías",
+        "GET /api/categorias/:id": "Obtener categoría específica",
+        "POST /api/categorias": "Crear categoría",
+        "DELETE /api/categorias/:id":
+          "Eliminar categoría (si no tiene tareas asociadas)",
       },
     },
     autenticacion: "Bearer token en header Authorization",
     ejemplos: {
       login:
         'POST /auth/login con {"email":"admin@example.com","password":"admin123"}',
-      listar: "GET /api/tareas (con header: Authorization: Bearer admin-token)",
-      crear: "POST /api/tareas con body y header de auth",
+      listar:
+        "GET /api/tareas?categoria_id=1 (con header: Authorization: Bearer admin-token)",
+      crear_categoria: 'POST /api/categorias con {"nombre":"Compras"}',
     },
   });
 });
 
 app.use(AppError); // Middleware de error centralizado
+
 app.use(NotFoundError); // Middleware 404
 
 // Iniciar servidor
