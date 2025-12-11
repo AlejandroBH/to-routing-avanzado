@@ -109,11 +109,13 @@ function autenticar(req, res, next) {
 const tareasRouter = express.Router();
 const usuariosRouter = express.Router();
 const categoriasRouter = express.Router();
+const estadisticasRouter = express.Router();
 
 // Middleware común para routers
 tareasRouter.use(autenticar);
 usuariosRouter.use(autenticar);
 categoriasRouter.use(autenticar);
+estadisticasRouter.use(autenticar);
 
 // RUTAS DE TAREAS
 
@@ -514,10 +516,79 @@ categoriasRouter.delete(
   }
 );
 
+// RUTAS DE ESTADÍSTICAS
+
+// GET /estadisticas/tareas-completadas - Conteo de tareas completadas
+estadisticasRouter.get("/tareas-completadas", (req, res) => {
+  const tareasDelUsuario = tareas.filter(
+    (t) => t.usuarioId === req.usuario.userId
+  );
+
+  const totalTareas = tareasDelUsuario.length;
+  const tareasCompletadas = tareasDelUsuario.filter((t) => t.completada).length;
+  const tareasPendientes = totalTareas - tareasCompletadas;
+
+  const porcentajeCompletadas =
+    totalTareas > 0 ? (tareasCompletadas / totalTareas) * 100 : 0;
+
+  res.json({
+    usuarioId: req.usuario.userId,
+    totalTareas: totalTareas,
+    completadas: tareasCompletadas,
+    pendientes: tareasPendientes,
+    porcentajeCompletadas: parseFloat(porcentajeCompletadas.toFixed(2)),
+  });
+});
+
+// GET /estadisticas/productividad-por-usuario - Productividad por usuario
+estadisticasRouter.get("/productividad-por-usuario", (req, res) => {
+  if (req.usuario.userId !== 1) {
+    throw new AppError(
+      "Acceso denegado. Solo administradores pueden ver la productividad global.",
+      403
+    );
+  }
+
+  const productividad = {};
+
+  usuarios.forEach((u) => {
+    productividad[u.id] = {
+      nombre: u.nombre,
+      totalTareas: 0,
+      completadas: 0,
+      pendientes: 0,
+      porcentajeCompletadas: 0,
+    };
+  });
+
+  tareas.forEach((tarea) => {
+    const userId = tarea.usuarioId;
+    if (productividad[userId]) {
+      productividad[userId].totalTareas++;
+      if (tarea.completada) {
+        productividad[userId].completadas++;
+      } else {
+        productividad[userId].pendientes++;
+      }
+    }
+  });
+
+  Object.values(productividad).forEach((stats) => {
+    if (stats.totalTareas > 0) {
+      stats.porcentajeCompletadas = parseFloat(
+        ((stats.completadas / stats.totalTareas) * 100).toFixed(2)
+      );
+    }
+  });
+
+  res.json(Object.values(productividad));
+});
+
 // Usar routers en la aplicación
 app.use("/api/tareas", tareasRouter);
 app.use("/api/usuarios", usuariosRouter);
 app.use("/api/categorias", categoriasRouter);
+app.use("/api/estadisticas", estadisticasRouter);
 
 // Ruta de login simulada
 app.post("/auth/login", (req, res) => {
@@ -563,6 +634,12 @@ app.get("/", (req, res) => {
         "POST /api/categorias": "Crear categoría",
         "DELETE /api/categorias/:id":
           "Eliminar categoría (si no tiene tareas asociadas)",
+      },
+      estadisticas: {
+        "GET /api/estadisticas/tareas-completadas":
+          "Estadísticas de tareas completadas del usuario autenticado",
+        "GET /api/estadisticas/productividad-por-usuario":
+          "Productividad de todos los usuarios (solo Admin)",
       },
     },
     autenticacion: "Bearer token en header Authorization",
