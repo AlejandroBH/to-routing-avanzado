@@ -189,12 +189,27 @@ tareasRouter.get(
 
     // Búsqueda
     if (q) {
-      const termino = q.toLowerCase();
-      resultados = resultados.filter(
-        (t) =>
-          t.titulo.toLowerCase().includes(termino) ||
-          t.descripcion.toLowerCase().includes(termino)
-      );
+      const terminos = q
+        .split(/\s+OR\s+/i)
+        .map((t) => t.trim().toLowerCase())
+        .filter((t) => t.length > 0);
+
+      if (terminos.length > 1) {
+        resultados = resultados.filter((t) => {
+          return terminos.some(
+            (termino) =>
+              t.titulo.toLowerCase().includes(termino) ||
+              t.descripcion.toLowerCase().includes(termino)
+          );
+        });
+      } else if (terminos.length === 1) {
+        const termino = terminos[0];
+        resultados = resultados.filter(
+          (t) =>
+            t.titulo.toLowerCase().includes(termino) ||
+            t.descripcion.toLowerCase().includes(termino)
+        );
+      }
     }
 
     // Ordenamiento
